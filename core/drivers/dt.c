@@ -29,7 +29,11 @@ struct device_table {
 
 static struct device_table g_device_table;
 
+#ifdef CFG_BSTGW_FIREWALL
+struct device *device_lookup(int node) {
+#else
 static struct device *device_lookup(int node) {
+#endif
 	struct device_bucket *bucket = &g_device_table.buckets[hash_32(node, DEVICE_TABLE_SIZE_LOG2)];
 	struct device *dev;
 
@@ -77,32 +81,6 @@ const char *simple_bus_match_table[] = {
 	"simple-mfd",
 	"isa"
 };
-
-// Note: Taken from a newer version of libFDT
-static int fdt_stringlist_count(const void *fdt, int nodeoffset, const char *property)
-{
-	const char *list, *end;
-	int length, count = 0;
-
-	list = fdt_getprop(fdt, nodeoffset, property, &length);
-	if (!list)
-		return length;
-
-	end = list + length;
-
-	while (list < end) {
-		length = strnlen(list, end - list) + 1;
-
-		/* Abort if the last string isn't properly NUL-terminated. */
-		if (list + length > end)
-			return -1;
-
-		list += length;
-		count++;
-	}
-
-	return count;
-}
 
 static bool dt_parse_resources(void *fdt, struct device *dev) {
 	int reg_length;
@@ -407,11 +385,11 @@ bool dt_enable_device(struct device *dev, bool enable) {
 			}
 
 			for (int r = 0; r < dev->num_resources; r++) {
-				emu_remove_region(dev->resources[r].address[0], dev->resources[r].size[0], emu_deny_all);
+				emu_remove_region(dev->resources[r].address[0], dev->resources[r].size[0], emu_deny_all, NULL);
 			}
 		} else {
 			for (int r = 0; r < dev->num_resources; r++) {
-				emu_add_region(dev->resources[r].address[0], dev->resources[r].size[0], emu_deny_all);
+				emu_add_region(dev->resources[r].address[0], dev->resources[r].size[0], emu_deny_all, NULL);
 			}
 
 			for (int c = 0; c < dev->num_csu; c++) {
@@ -499,4 +477,3 @@ static TEE_Result dt_probe(void) {
 	return 0;
 }
 driver_init(dt_probe);
-

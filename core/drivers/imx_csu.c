@@ -23,6 +23,9 @@ void csu_init(paddr_t base) {
 		csu_csl_counts[c] = 1;
 		csu_set_csl(c, false);
 	}
+    // except TZASC 1 + 2
+    csu_set_csl(32, true);
+    csu_set_csl(33, true);
 
 	// Default to non-secure DMA masters (6 and 15 are reserved)
 	for (int m = 1; m < MAX_SA; m++) {
@@ -53,12 +56,12 @@ void csu_set_csl(int csl, bool protect) {
 		int csl_reg = csl >> 1;
 		vaddr_t csl_addr = csu_base + (4 * csl_reg);
 
-		uint32_t value = read32(csl_addr);
+		uint32_t value = io_read32(csl_addr);
 		uint32_t mask = (csl % 2 == 0) ? 0x000000FF : 0x00FF0000;
 		uint32_t value_new = (value & ~mask) | ((protect ? 0x33333333 : 0xFFFFFFFF) & mask);
 
 		IMSG("[CSU] Updating CSU CSL %d from 0x%X to 0x%X", csl, value, value_new);
-		write32(value_new, csl_addr);
+		io_write32(csl_addr, value_new);
 	}
 }
 
@@ -73,11 +76,11 @@ void csu_set_sa(int master, bool secure) {
 
 	vaddr_t sa_addr = csu_base + 0x218;
 
-	uint32_t value = read32(sa_addr);
+	uint32_t value = io_read32(sa_addr);
 	uint32_t mask = 0x3 << (2 * master);
 	uint32_t value_new = (value & ~mask) | ((secure ? 0x00000000 : 0x55555555) & mask);
 
 	IMSG("[CSU] Updating CSU SA %d from 0x%X to 0x%X", master, value, value_new);
-	write32(value_new, sa_addr);
+	io_write32(sa_addr, value_new);
 }
 

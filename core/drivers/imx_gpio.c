@@ -177,27 +177,27 @@ enum {
 
 static int gpio_get_value(struct mxc_gpio_port *port, int index)
 {
-	uint32_t psr = read32(port->base + GPIO_PSR);
+	uint32_t psr = io_read32(port->base + GPIO_PSR);
 	return psr & (1 << index);
 }
 
 static void gpio_set_dir(struct mxc_gpio_port *port, int index, int direction) {
-	uint32_t gdir = read32(port->base + GPIO_GDIR);
+	uint32_t gdir = io_read32(port->base + GPIO_GDIR);
 	gdir = (gdir & ~(1 << index)) | (direction << index);
-	write32(gdir, port->base + GPIO_GDIR);
+	io_write32(port->base + GPIO_GDIR, gdir);
 }
 
 static void gpio_irq_mask(struct mxc_gpio_port *port, int index, bool mask) {
-	uint32_t imr = read32(port->base + GPIO_IMR);
+	uint32_t imr = io_read32(port->base + GPIO_IMR);
 	if (mask) {
-		write32(imr & ~(1 << index), port->base + GPIO_IMR);
+		io_write32(port->base + GPIO_IMR, imr & ~(1 << index));
 	} else {
-		write32(imr | (1 << index), port->base + GPIO_IMR);
+		io_write32(port->base + GPIO_IMR, imr | (1 << index));
 	}
 }
 
 static void gpio_irq_ack(struct mxc_gpio_port *port, int index) {
-	write32(1 << index, port->base + GPIO_ISR);
+	io_write32(port->base + GPIO_ISR, 1 << index);
 }
 
 static int gpio_set_irq_type(struct mxc_gpio_port *port, int index, uint32_t type)
@@ -237,21 +237,21 @@ static int gpio_set_irq_type(struct mxc_gpio_port *port, int index, uint32_t typ
 	}
 
 	if (GPIO_EDGE_SEL >= 0) {
-		val = read32(port->base + GPIO_EDGE_SEL);
+		val = io_read32(port->base + GPIO_EDGE_SEL);
 		if (edge == GPIO_INT_BOTH_EDGES)
-			write32(val | (1 << index), port->base + GPIO_EDGE_SEL);
+			io_write32(port->base + GPIO_EDGE_SEL, val | (1 << index));
 		else
-			write32(val & ~(1 << index), port->base + GPIO_EDGE_SEL);
+			io_write32(port->base + GPIO_EDGE_SEL, val & ~(1 << index));
 	}
 
 	if (edge != GPIO_INT_BOTH_EDGES) {
 		vaddr_t reg = port->base + GPIO_ICR1 + ((index & 0x10) >> 2);
 		bit = index & 0xf;
-		val = read32(reg) & ~(0x3 << (bit << 1));
-		write32(val | (edge << (bit << 1)), reg);
+		val = io_read32(reg) & ~(0x3 << (bit << 1));
+		io_write32(reg, val | (edge << (bit << 1)));
 	}
 
-	write32(1 << index, port->base + GPIO_ISR);
+	io_write32(port->base + GPIO_ISR, 1 << index);
 
 	return 0;
 }
@@ -278,7 +278,7 @@ struct mxc_gpio_port *gpio_port_from_address(paddr_t base) {
 	return port;
 }
 
-static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_state state, uint32_t *value) {
+static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_state state, uint32_t *value, int size __unused, bool sign __unused) {
 	struct mxc_gpio_port *port = gpio_port_from_address(region->base);
 	paddr_t offset = address - region->base;
 
@@ -286,7 +286,7 @@ static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_stat
 	if (offset == GPIO_DR) {
 		switch(state) {
 			case EMU_STATE_WRITE:
-				if ((read32(port->base + GPIO_DR) & port->secure_mask) != (*value & port->secure_mask)) {
+				if ((io_read32(port->base + GPIO_DR) & port->secure_mask) != (*value & port->secure_mask)) {
 					allowed = false;
 				}
 				break;
@@ -299,7 +299,7 @@ static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_stat
 	} else if (offset == GPIO_GDIR) {
 		switch (state) {
 			case EMU_STATE_WRITE:
-				if ((read32(port->base + GPIO_GDIR) & port->secure_mask) != (*value & port->secure_mask)) {
+				if ((io_read32(port->base + GPIO_GDIR) & port->secure_mask) != (*value & port->secure_mask)) {
 					allowed = false;
 				}
 				break;
@@ -315,7 +315,7 @@ static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_stat
 				if ((*value & port->secure_mask) != 0) {
 					if ((*value & port->passed_irq_mask) == *value) {
 						port->passed_irq_mask &= ~(*value);
-						write32(read32(port->base + GPIO_IMR) | *value, port->base + GPIO_IMR);
+						io_write32(port->base + GPIO_IMR, io_read32(port->base + GPIO_IMR) | *value);
 					} else {
 						allowed = false;
 					}
@@ -350,7 +350,7 @@ static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_stat
 	} else if (offset == (uint32_t)GPIO_EDGE_SEL) {
 		switch (state) {
 			case EMU_STATE_WRITE:
-				if (((*value) & port->secure_mask) != (read32(port->base + GPIO_EDGE_SEL) & port->secure_mask)) {
+				if (((*value) & port->secure_mask) != (io_read32(port->base + GPIO_EDGE_SEL) & port->secure_mask)) {
 					allowed = false;
 				}
 				break;
@@ -367,7 +367,7 @@ static bool gpio_emu_check(struct region *region, paddr_t address, enum emu_stat
 
 		switch (state) {
 			case EMU_STATE_WRITE:
-				if (((*value) & secure_icr_mask) != (read32(port->base + offset) & secure_icr_mask)) {
+				if (((*value) & secure_icr_mask) != (io_read32(port->base + offset) & secure_icr_mask)) {
 					allowed = false;
 				}
 				break;
@@ -449,18 +449,18 @@ void gpio_release_dt(const uint32_t *gpio_info) {
 }
 
 bool gpio_read(struct mxc_gpio_port *port, int index) {
-	return !!(read32(port->base + GPIO_DR) & (1 << index));
+	return !!(io_read32(port->base + GPIO_DR) & (1 << index));
 }
 
 void gpio_write(struct mxc_gpio_port *port, int index, bool value) {
 	uint32_t mask = 1 << index;
-	uint32_t dr = read32(port->base + GPIO_DR);
+	uint32_t dr = io_read32(port->base + GPIO_DR);
 	if (value) {
 		dr |= mask;
 	} else {
 		dr &= ~mask;
 	}
-	write32(dr, port->base + GPIO_DR);
+	io_write32(port->base + GPIO_DR, dr);
 }
 
 static void mxc_flip_edge(struct mxc_gpio_port *port, uint32_t gpio)
@@ -471,7 +471,7 @@ static void mxc_flip_edge(struct mxc_gpio_port *port, uint32_t gpio)
 
 	reg += GPIO_ICR1 + ((gpio & 0x10) >> 2); /* lower or upper register */
 	bit = gpio & 0xf;
-	val = read32(reg);
+	val = io_read32(reg);
 	edge = (val >> (bit << 1)) & 3;
 	val &= ~(0x3 << (bit << 1));
 	if (edge == GPIO_INT_HIGH_LEV) {
@@ -483,7 +483,7 @@ static void mxc_flip_edge(struct mxc_gpio_port *port, uint32_t gpio)
 		return;
 	}
 
-	write32(val | (edge << (bit << 1)), reg);
+	io_write32(reg, val | (edge << (bit << 1)));
 }
 
 static inline unsigned int __clz(unsigned int x) {
@@ -499,6 +499,7 @@ static inline int fls(int x) {
 /* handle 32 interrupts in one status register */
 static void mxc_gpio_irq_handler(struct mxc_gpio_port *port, uint32_t irq_stat)
 {
+    //DMSG("GPIO mxc_gpio_irq_handler (irq_stat: 0x%x)", irq_stat);
 	while (irq_stat != 0) {
 		int irqoffset = fls(irq_stat) - 1;
 
@@ -516,6 +517,7 @@ static void mxc_gpio_irq_handler(struct mxc_gpio_port *port, uint32_t irq_stat)
 				gpio_irq_mask(port, irqoffset, true);
 				break;
 			default:
+				//EMSG("default case GPIO");
 				if (!(port->secure_mask & (1 << irqoffset))) {
 					port->passed_irq_mask |= (1 << irqoffset);
 					gpio_irq_mask(port, irqoffset, true);
@@ -537,7 +539,7 @@ static enum irq_return mx3_gpio_irq_handler(struct irq_handler *handler)
 	uint32_t irq_stat;
 	struct mxc_gpio_port *port = handler->data;
 
-	irq_stat = read32(port->base + GPIO_ISR) & read32(port->base + GPIO_IMR);
+	irq_stat = io_read32(port->base + GPIO_ISR) & io_read32(port->base + GPIO_IMR);
 	mxc_gpio_irq_handler(port, irq_stat);
 
 	return ITRR_HANDLED;
@@ -552,11 +554,11 @@ static enum irq_return mx2_gpio_irq_handler(struct irq_handler *handler)
 
 	/* walk through all interrupt status registers */
 	SLIST_FOREACH(port, &mxc_gpio_ports, node) {
-		irq_msk = read32(port->base + GPIO_IMR);
+		irq_msk = io_read32(port->base + GPIO_IMR);
 		if (!irq_msk)
 			continue;
 
-		irq_stat = read32(port->base + GPIO_ISR) & irq_msk;
+		irq_stat = io_read32(port->base + GPIO_ISR) & irq_msk;
 		if (irq_stat)
 			mxc_gpio_irq_handler(port, irq_stat);
 	}
@@ -616,8 +618,8 @@ static int mxc_gpio_probe(const void *fdt __unused, struct device *dev, const vo
 		return -EINVAL;
 	}
 
-	write32(0, port->base + GPIO_IMR);
-	write32(~0, port->base + GPIO_ISR);
+	io_write32(port->base + GPIO_IMR, 0);
+	io_write32(port->base + GPIO_ISR, ~0);
 
 	port->irq = &dev->irqs[0].desc;
 	port->handler.handle = mxc_gpio_hwtype == IMX21_GPIO ? mx2_gpio_irq_handler : mx3_gpio_irq_handler;
@@ -637,7 +639,7 @@ static int mxc_gpio_probe(const void *fdt __unused, struct device *dev, const vo
 
 	port->irq_pass = dev->num_irqs == 3 ? &dev->irqs[2].desc : &dev->irqs[1].desc;
 
-	emu_add_region(port->pbase, port->dev->resources[0].size[0], gpio_emu_check);
+	emu_add_region(port->pbase, port->dev->resources[0].size[0], gpio_emu_check, NULL);
 	csu_set_csl(port->dev->csu[0], true);
 
 	irq_construct_chip(&port->irq_chip, dev, &irq_ops, 32, port, true);

@@ -1,28 +1,6 @@
+// SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2016, Linaro Limited
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * Copyright (c) 2016-2019, Linaro Limited
  */
 
 #include <kernel/interrupt.h>
@@ -30,6 +8,7 @@
 #include <errno.h>
 #include <malloc.h>
 #include <trace.h>
+#include <assert.h>
 
 static SLIST_HEAD(, irq_chip) chips = SLIST_HEAD_INITIALIZER(chips);
 
@@ -74,37 +53,36 @@ static bool irq_check_valid(struct irq_chip *chip, size_t irq) {
 	}
 
 	return true;
-}
+ }
 
 enum irq_return irq_handle(struct irq_chip *chip, size_t irq)
-{
+ {
 	if (!irq_check_valid(chip, irq)) {
 		return ITRR_NONE;
 	}
-
 	struct irq_handler *handler = chip->handlers[irq];
 	if (!handler) {
 		if (chip->default_handler) {
+            DMSG("IRQ unhandled, returning forward to default handler (IRQ: %zu)", irq);
 			return ITRR_HANDLED_DEFAULT;
 		} else {
 			EMSG("[IRQ] Disabling unhandled interrupt %zu", irq);
 			chip->ops->disable(chip, irq);
 			return ITRR_NONE;
 		}
-	}
-
+ 	}
 	enum irq_return ret = handler->handle(handler);
 	if (ret == ITRR_NONE) {
 		EMSG("[IRQ] Disabling interrupt %zu not handled by handler", irq);
 		chip->ops->disable(chip, irq);
-	}
+ 	}
 
 	return ret;
-}
+ }
 
 int32_t irq_map(struct irq_chip *chip, const fdt32_t *dt_spec, size_t *irq, uint32_t *flags) {
 	return chip->ops->map(chip, dt_spec, irq, flags);
-}
+ }
 
 int32_t irq_add(struct irq_desc *desc, uint32_t flags, struct irq_handler *handler) {
 	struct irq_chip *chip = desc->chip;
@@ -115,7 +93,7 @@ int32_t irq_add(struct irq_desc *desc, uint32_t flags, struct irq_handler *handl
 
 	chip->handlers[irq] = handler;
 	return chip->ops->add(chip, irq, flags);
-}
+ }
 
 int32_t irq_remove(struct irq_desc *desc) {
 	struct irq_chip *chip = desc->chip;
@@ -130,7 +108,7 @@ int32_t irq_remove(struct irq_desc *desc) {
 	}
 
 	return error;
-}
+ }
 
 int32_t irq_enable(struct irq_desc *desc) {
 	struct irq_chip *chip = desc->chip;
@@ -140,7 +118,7 @@ int32_t irq_enable(struct irq_desc *desc) {
 	}
 
 	return chip->ops->enable(chip, irq);
-}
+ }
 
 int32_t irq_disable(struct irq_desc *desc) {
 	struct irq_chip *chip = desc->chip;
@@ -150,7 +128,7 @@ int32_t irq_disable(struct irq_desc *desc) {
 	}
 
 	return chip->ops->disable(chip, irq);
-}
+ }
 
 int32_t irq_secure(struct irq_desc *desc) {
 	struct irq_chip *chip = desc->chip;
@@ -208,4 +186,12 @@ int32_t irq_set_affinity(struct irq_desc *desc, uint8_t cpu_mask) {
 	}
 
 	return chip->ops->set_affinity(chip, irq, cpu_mask);
+ }
+
+/* none-SeCloak, but required */
+
+/* This function is supposed to be overridden in platform specific code */
+void __weak __noreturn itr_core_handler(void)
+{
+	panic("Secure interrupt handler not defined");
 }

@@ -52,5 +52,9 @@ bool dt_enable_device(struct device *dev, bool enable);
 void dt_enable_class(const char *name, bool enable);
 bool dt_is_class_enabled(const char *name);
 
+#ifdef CFG_BSTGW_FIREWALL
+struct device *device_lookup(int node);
+#endif
+
 #endif
 

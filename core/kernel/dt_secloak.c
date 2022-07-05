@@ -1,28 +1,6 @@
+// SPDX-License-Identifier: BSD-2-Clause
 /*
  * Copyright (c) 2016, Linaro Limited
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <assert.h>
@@ -40,17 +18,99 @@ const struct dt_driver *dt_find_compatible_driver(const void *fdt, int offs)
 	const struct dt_device_match *dm;
 	const struct dt_driver *drv;
 
-	for_each_dt_driver(drv)
-		for (dm = drv->match_table; dm; dm++)
+	for_each_dt_driver(drv) {
+		for (dm = drv->match_table; dm; dm++) {
+			if (!dm->compatible) {
+				break;
+			}
 			if (!fdt_node_check_compatible(fdt, offs,
-						       dm->compatible))
+						       dm->compatible)) {
 				return drv;
+			}
+		}
+	}
 
 	return NULL;
 }
 
-int dt_probe_compatible_driver(const void *fdt, struct device *dev)
+// not secloak
+bool dt_have_prop(const void *fdt, int offs, const char *propname)
 {
+	const void *prop;
+
+	prop = fdt_getprop(fdt, offs, propname, NULL);
+
+	return prop;
+}
+
+int dt_get_irq(void *fdt, int node)
+{
+	const uint32_t *int_prop = NULL;
+	int len_prop = 0;
+	int it_num = DT_INFO_INVALID_INTERRUPT;
+
+	/*
+	 * Interrupt property can be defined with at least 2x32 bits word
+	 *  - Type of interrupt
+	 *  - Interrupt Number
+	 */
+	int_prop = fdt_getprop(fdt, node, "interrupts", &len_prop);
+
+	if (!int_prop || len_prop < 2)
+		return it_num;
+
+	it_num = fdt32_to_cpu(int_prop[1]);
+
+	return it_num;
+}
+
+int dt_disable_status(void *fdt, int node)
+{
+	const char *prop = NULL;
+	int len = 0;
+
+	prop = fdt_getprop(fdt, node, "status", &len);
+	if (!prop) {
+		if (fdt_setprop_string(fdt, node, "status", "disabled"))
+			return -1;
+	} else {
+		/*
+		 * Status is there, modify it.
+		 * Ask to set "disabled" value to the property. The value
+		 * will be automatically truncated with "len" size by the
+		 * fdt_setprop_inplace function.
+		 * Setting a value different from "ok" or "okay" will disable
+		 * the property.
+		 * Setting a truncated value of "disabled" with the original
+		 * property "len" is preferred to not increase the DT size and
+		 * losing time in recalculating the overall DT offsets.
+		 * If original length of the status property is larger than
+		 * "disabled", the property will start with "disabled" and be
+		 * completed with the rest of the original property.
+		 */
+		if (fdt_setprop_inplace(fdt, node, "status", "disabled", len))
+			return -1;
+	}
+
+	return 0;
+}
+
+int dt_enable_secure_status(void *fdt, int node)
+{
+	if (dt_disable_status(fdt, node)) {
+		EMSG("Unable to disable Normal Status");
+		return -1;
+	}
+
+	if (fdt_setprop_string(fdt, node, "secure-status", "okay"))
+		return -1;
+
+	return 0;
+}
+// not secloak
+
+int dt_probe_compatible_driver(const void *fdt, struct device *dev)
+ {
 	const struct dt_driver *driver;
 
 	for_each_dt_driver(driver) {
@@ -59,10 +119,10 @@ int dt_probe_compatible_driver(const void *fdt, struct device *dev)
 				return driver->probe(fdt, dev, match->data);
 			}
 		}
-	}
-
-	return 0;
-}
+ 	}
+ 
+ 	return 0;
+ }
 
 const struct dt_driver *__dt_driver_start(void)
 {
@@ -87,12 +147,104 @@ int dt_read_property_u32(const void *fdt, int offs, const char *name, uint32_t *
 
 	prop = fdt_getprop(fdt, offs, name, &prop_size);
 	if (!prop || (prop_size != sizeof(uint32_t))) {
-		return -1;
+ 		return -1;
 	}
 
 	*out = fdt32_to_cpu(*((uint32_t*)prop));
 	return 0;
 }
+
+// not secloak
+/* Read a physical address (n=1 or 2 cells) */
+static paddr_t _fdt_read_paddr(const uint32_t *cell, int n)
+{
+	paddr_t addr;
+
+	if (n < 1 || n > 2)
+		goto bad;
+
+	addr = fdt32_to_cpu(*cell);
+	cell++;
+	if (n == 2) {
+#ifdef ARM32
+		if (addr) {
+			/* High order 32 bits can't be nonzero */
+			goto bad;
+		}
+		addr = fdt32_to_cpu(*cell);
+#else
+		addr = (addr << 32) | fdt32_to_cpu(*cell);
+#endif
+	}
+
+	if (!addr)
+		goto bad;
+
+	return addr;
+bad:
+	return DT_INFO_INVALID_REG;
+
+}
+
+paddr_t _fdt_reg_base_address(const void *fdt, int offs)
+{
+	const void *reg;
+	int ncells;
+	int len;
+	int parent;
+
+	parent = fdt_parent_offset(fdt, offs);
+	if (parent < 0)
+		return DT_INFO_INVALID_REG;
+
+	reg = fdt_getprop(fdt, offs, "reg", &len);
+	if (!reg)
+		return DT_INFO_INVALID_REG;
+
+	ncells = fdt_address_cells(fdt, parent);
+	if (ncells < 0)
+		return DT_INFO_INVALID_REG;
+
+	return _fdt_read_paddr(reg, ncells);
+}
+
+ssize_t _fdt_reg_size(const void *fdt, int offs)
+{
+	const uint32_t *reg;
+	uint32_t sz;
+	int n;
+	int len;
+	int parent;
+
+	parent = fdt_parent_offset(fdt, offs);
+	if (parent < 0)
+		return DT_INFO_INVALID_REG;
+
+	reg = (const uint32_t *)fdt_getprop(fdt, offs, "reg", &len);
+	if (!reg)
+		return -1;
+
+	n = fdt_address_cells(fdt, parent);
+	if (n < 1 || n > 2)
+		return -1;
+
+	reg += n;
+
+	n = fdt_size_cells(fdt, parent);
+	if (n < 1 || n > 2)
+		return -1;
+
+	sz = fdt32_to_cpu(*reg);
+	if (n == 2) {
+		if (sz)
+			return -1;
+		reg++;
+		sz = fdt32_to_cpu(*reg);
+	}
+
+	return sz;
+}
+//
 
 static bool is_okay(const char *st, int len)
 {
@@ -108,7 +260,35 @@ int _fdt_get_status(const void *fdt, int offs)
 	prop = fdt_getprop(fdt, offs, "status", &len);
 	if (!prop || is_okay(prop, len)) {
 		st |= DT_STATUS_OK_NSEC | DT_STATUS_OK_SEC;
-	}
+ 	}
 
 	return st;
+}
+
+void _fdt_fill_device_info(void *fdt, struct dt_node_info *info, int offs)
+{
+	struct dt_node_info dinfo = {
+		.reg = DT_INFO_INVALID_REG,
+		.clock = DT_INFO_INVALID_CLOCK,
+		.reset = DT_INFO_INVALID_RESET,
+	};
+	const fdt32_t *cuint;
+
+	dinfo.reg = _fdt_reg_base_address(fdt, offs);
+
+	cuint = fdt_getprop(fdt, offs, "clocks", NULL);
+	if (cuint) {
+		cuint++;
+		dinfo.clock = (int)fdt32_to_cpu(*cuint);
+	}
+
+	cuint = fdt_getprop(fdt, offs, "resets", NULL);
+	if (cuint) {
+		cuint++;
+		dinfo.reset = (int)fdt32_to_cpu(*cuint);
+	}
+
+	dinfo.status = _fdt_get_status(fdt, offs);
+
+	*info = dinfo;
 }
